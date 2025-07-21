@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Algorand Falling Transactions</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(to bottom, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: white;
+            font-family: monospace;
+            overflow: hidden;
+        }
+        
+        #canvas {
+            display: block;
+            cursor: crosshair;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+        
+        .tx-legend {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 3px;
+        }
+        
+        .legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .play-btn {
+            background: #ff4444;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        
+        .stats {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #444;
+        }
+        
+        @keyframes blockComplete {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        
+        .block-animation {
+            animation: blockComplete 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <div id="controls">
+        <div><strong>Algorand Mempool</strong></div>
+        <div style="margin-top: 10px;">
+            <div>Round: <span id="round-counter">1</span></div>
+            <div>Time: <span id="time-display">0:00</span></div>
+            <div>Block Time: <span id="countdown">2.8</span>s</div>
+        </div>
+        <div class="stats">
+            <div>tps: <span id="falling-count">0</span></div>
+            <div>In Mempool: <span id="funnel-count">0</span></div>
+            <div>Blocks Created: <span id="blocks-count">0</span></div>
+        </div>
+        <button class="play-btn" id="play-pause">⏸️ Pause</button>
+    </div>
+    
+    <div class="tx-legend">
+        <div style="margin-bottom: 10px;"><strong>Transaction Types</strong></div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #3b82f6;"></div>
+            <span>Payment</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #ef4444;"></div>
+            <span>Asset Transfer</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #22c55e;"></div>
+            <span>Asset Config</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #f97316;"></div>
+            <span>Asset Freeze</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #a855f7;"></div>
+            <span>App Call</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #06b6d4;"></div>
+            <span>Key Registration</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #ec4899;"></div>
+            <span>State Proof</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #84cc16;"></div>
+            <span>Heartbeat</span>
+        </div>
+    </div>
+
+    <script>
+        class AlgorandFallingTxs {
+            constructor() {
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.setupCanvas();
+                
+                // Transaction types
+                this.txTypes = [
+                    { name: 'Payment', color: '#3b82f6', weight: 0.4 },
+                    { name: 'Asset Transfer', color: '#ef4444', weight: 0.25 },
+                    { name: 'Asset Config', color: '#22c55e', weight: 0.1 },
+                    { name: 'Asset Freeze', color: '#f97316', weight: 0.05 },
+                    { name: 'App Call', color: '#a855f7', weight: 0.15 },
+                    { name: 'Key Registration', color: '#06b6d4', weight: 0.02 },
+                    { name: 'State Proof', color: '#ec4899', weight: 0.02 },
+                    { name: 'Heartbeat', color: '#84cc16', weight: 0.01 }
+                ];
+                
+                // Simulation parameters
+                this.blockTime = 2800; // 2.8 seconds
+                this.gravity = 0.3;
+                this.txSpawnRate = this.getRandomSpawnRate(); // Random between 7-177ms
+                
+                // State
+                this.transactions = [];
+                this.blocks = [];
+                this.funnel = null;
+                this.round = 1;
+                this.startTime = Date.now();
+                this.lastBlockTime = Date.now();
+                this.lastTxSpawn = Date.now();
+                this.isPlaying = true;
+                this.blocksCreated = 0;
+                
+                // TPS tracking
+                this.txSpawnTimes = [];
+                this.currentTPS = 0;
+
+                this.initializeFunnel();
+                this.setupEventListeners();
+                this.animate();
+            }
+            
+            setupCanvas() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+            
+            initializeFunnel() {
+                const centerX = this.canvas.width / 2;
+                const funnelTop = this.canvas.height * 0.5;
+                const funnelBottom = this.canvas.height * 0.7;
+                const funnelWidth = 400;
+                
+                this.funnel = {
+                    leftX: centerX - funnelWidth / 2,
+                    rightX: centerX + funnelWidth / 2,
+                    topY: funnelTop,
+                    bottomY: funnelBottom,
+                    centerX: centerX,
+                    bottomWidth: 20,
+                    transactions: []
+                };
+            }
+            
+            setupEventListeners() {
+                window.addEventListener('resize', () => {
+                    this.setupCanvas();
+                    this.initializeFunnel();
+                });
+                
+                document.getElementById('play-pause').addEventListener('click', () => {
+                    this.isPlaying = !this.isPlaying;
+                    document.getElementById('play-pause').textContent = 
+                        this.isPlaying ? '⏸️ Pause' : '▶️ Play';
+                });
+            }
+            
+            spawnTransaction() {
+                if (!this.isPlaying) return;
+                
+                const typeIndex = this.weightedRandom();
+                const tx = {
+                    type: typeIndex,
+                    x: this.funnel.leftX + Math.random() * (this.funnel.rightX - this.funnel.leftX),
+                    y: -10,
+                    vx: (Math.random() - 0.5) * 2, // Small horizontal velocity
+                    vy: Math.random() * 2 + 1, // Initial downward velocity
+                    size: Math.random() * 4 + 3,
+                    opacity: Math.random() * 0.3 + 0.7,
+                    id: Math.random(),
+                    inFunnel: false
+                };
+                this.transactions.push(tx);
+                
+                // Track spawn time for TPS calculation
+                this.txSpawnTimes.push(Date.now());
+                
+                // Keep only last 3 seconds of spawn times
+                const cutoffTime = Date.now() - 3000;
+                this.txSpawnTimes = this.txSpawnTimes.filter(time => time > cutoffTime);
+            }
+            
+            weightedRandom() {
+                let random = Math.random();
+                for (let i = 0; i < this.txTypes.length; i++) {
+                    random -= this.txTypes[i].weight;
+                    if (random <= 0) return i;
+                }
+                return 0;
+            }
+            
+            getRandomSpawnRate() {
+                const txPerSecond = Math.floor(Math.random() * (177 - 7 + 1)) + 7; // Simple uniform random 7-177
+                this.targetTPS = txPerSecond;
+                return 1000 / txPerSecond;
+            }
+            
+            update() {
+                if (!this.isPlaying) return;
+                
+                const now = Date.now();
+                
+                // Spawn new transactions
+                if (now - this.lastTxSpawn > this.txSpawnRate) {
+                    this.spawnTransaction();
+                    this.lastTxSpawn = now;
+                    
+                    // Change rate every 5-10 transactions instead of every transaction
+                    if (Math.random() < 0.15) { // 15% chance to change rate
+                        this.txSpawnRate = this.getRandomSpawnRate();
+                    }
+                }
+                
+                // Update falling transactions
+                this.transactions.forEach(tx => {
+                    if (!tx.inFunnel) {
+                        // Apply gravity
+                        tx.vy += this.gravity;
+                        tx.x += tx.vx;
+                        tx.y += tx.vy;
+                        
+                        // Check if transaction enters funnel
+                        if (tx.y >= this.funnel.topY) {
+                            const funnelProgress = (tx.y - this.funnel.topY) / (this.funnel.bottomY - this.funnel.topY);
+                            const funnelWidthAtY = this.funnel.bottomWidth + 
+                                (Math.abs(this.funnel.rightX - this.funnel.leftX) - this.funnel.bottomWidth) * (1 - funnelProgress);
+                            
+                            const leftBound = this.funnel.centerX - funnelWidthAtY / 2;
+                            const rightBound = this.funnel.centerX + funnelWidthAtY / 2;
+                            
+                            if (tx.x >= leftBound && tx.x <= rightBound) {
+                                tx.inFunnel = true;
+                                tx.vx *= 0.5; // Reduce horizontal movement in funnel
+                                tx.vy *= 0.7; // Slow down vertical movement
+                                this.funnel.transactions.push(tx);
+                            }
+                        }
+                    } else {
+                        // Transaction is in funnel - move slowly toward bottom center
+                        const targetX = this.funnel.centerX + (Math.random() - 0.5) * this.funnel.bottomWidth;
+                        const targetY = this.funnel.bottomY;
+                        
+                        tx.x += (targetX - tx.x) * 0.02;
+                        tx.y += (targetY - tx.y) * 0.02;
+                        tx.vy *= 0.95; // Slow down
+                    }
+                });
+                
+                // Remove transactions that fall off screen (not in funnel)
+                this.transactions = this.transactions.filter(tx => 
+                    tx.inFunnel || tx.y < this.canvas.height + 50
+                );
+                
+                // Update existing blocks (move them down)
+                this.blocks.forEach(block => {
+                    block.y += 2;
+                });
+                
+                // Remove blocks that have moved off screen
+                this.blocks = this.blocks.filter(block => block.y < this.canvas.height + 100);
+                
+                // Check for block completion
+                if (now - this.lastBlockTime >= this.blockTime) {
+                    this.completeBlock();
+                    this.lastBlockTime = now;
+                }
+                
+                this.updateUI();
+            }
+            
+            completeBlock() {
+                // Create circular block with random transactions
+                const blockTxCount = Math.floor(Math.random() * 20) + 10; // 10-30 transactions per block
+                const blockTxs = [];
+                
+                // Generate random transactions for the block
+                for (let i = 0; i < blockTxCount; i++) {
+                    const typeIndex = this.weightedRandom();
+                    blockTxs.push({
+                        type: typeIndex,
+                        // Random position within circle (will be calculated in draw)
+                        angle: Math.random() * Math.PI * 2,
+                        radius: Math.random() * 35 + 5 // Random radius within block
+                    });
+                }
+                
+                const block = {
+                    x: this.funnel.centerX,
+                    y: this.funnel.bottomY + 60,
+                    radius: 40, // Circle radius
+                    transactions: blockTxs,
+                    round: this.round,
+                    opacity: 0.9
+                };
+                
+                this.blocks.push(block);
+                this.blocksCreated++;
+                
+                // Remove transactions that were in the funnel
+                this.transactions = this.transactions.filter(tx => !tx.inFunnel);
+                
+                // Reset funnel
+                this.funnel.transactions = [];
+                this.round++;
+                
+                // Animation effect
+                document.getElementById('round-counter').classList.add('block-animation');
+                setTimeout(() => {
+                    document.getElementById('round-counter').classList.remove('block-animation');
+                }, 300);
+            }
+            
+            draw() {
+                // Clear canvas with gradient
+                const gradient = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
+                gradient.addColorStop(0, '#1a1a2e');
+                gradient.addColorStop(0.5, '#16213e');
+                gradient.addColorStop(1, '#0f3460');
+                this.ctx.fillStyle = gradient;
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw funnel
+                this.drawFunnel();
+                
+                // Draw falling transactions
+                this.transactions.forEach(tx => {
+                    const type = this.txTypes[tx.type];
+                    if (!type) return;
+                    
+                    this.ctx.fillStyle = type.color + Math.floor(tx.opacity * 255).toString(16).padStart(2, '0');
+                    this.ctx.beginPath();
+                    this.ctx.arc(tx.x, tx.y, tx.size, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    
+                    // Add glow effect
+                    this.ctx.shadowBlur = 10;
+                    this.ctx.shadowColor = type.color;
+                    this.ctx.fill();
+                    this.ctx.shadowBlur = 0;
+                });
+                
+                // Draw completed blocks as circles with transactions inside
+                this.blocks.forEach(block => {
+                    // Draw block circle background
+                    this.ctx.fillStyle = `rgba(40, 40, 60, ${block.opacity * 0.8})`;
+                    this.ctx.beginPath();
+                    this.ctx.arc(block.x, block.y, block.radius, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    
+                    // Draw block circle border with glow
+                    this.ctx.strokeStyle = `rgba(255, 255, 255, ${block.opacity * 0.8})`;
+                    this.ctx.lineWidth = 3;
+                    this.ctx.shadowBlur = 10;
+                    this.ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+                    this.ctx.stroke();
+                    this.ctx.shadowBlur = 0; // Reset shadow
+                    
+                    // Draw transactions inside the block
+                    block.transactions.forEach(tx => {
+                        const type = this.txTypes[tx.type];
+                        if (!type) return;
+                        
+                        const txX = block.x + Math.cos(tx.angle) * tx.radius;
+                        const txY = block.y + Math.sin(tx.angle) * tx.radius;
+                        
+                        this.ctx.fillStyle = type.color + Math.floor(block.opacity * 255).toString(16).padStart(2, '0');
+                        this.ctx.beginPath();
+                        this.ctx.arc(txX, txY, 3, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    });
+                    
+                    // Draw block number in center
+                    this.ctx.fillStyle = `rgba(255, 255, 255, ${block.opacity})`;
+                    this.ctx.font = '12px monospace';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText(`Block ${block.round}`, block.x, block.y + 4);
+                });
+            }
+            
+            drawFunnel() {
+                // Draw funnel lines
+                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                this.ctx.lineWidth = 3;
+                
+                // Left line
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.funnel.leftX, this.funnel.topY);
+                this.ctx.lineTo(this.funnel.centerX - this.funnel.bottomWidth / 2, this.funnel.bottomY);
+                this.ctx.stroke();
+                
+                // Right line
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.funnel.rightX, this.funnel.topY);
+                this.ctx.lineTo(this.funnel.centerX + this.funnel.bottomWidth / 2, this.funnel.bottomY);
+                this.ctx.stroke();
+                
+                // Add glow to funnel
+                this.ctx.shadowBlur = 15;
+                this.ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+                
+                // Redraw for glow effect
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.funnel.leftX, this.funnel.topY);
+                this.ctx.lineTo(this.funnel.centerX - this.funnel.bottomWidth / 2, this.funnel.bottomY);
+                this.ctx.stroke();
+                
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.funnel.rightX, this.funnel.topY);
+                this.ctx.lineTo(this.funnel.centerX + this.funnel.bottomWidth / 2, this.funnel.bottomY);
+                this.ctx.stroke();
+                
+                this.ctx.shadowBlur = 0;
+            }
+            
+            updateUI() {
+                const elapsed = (Date.now() - this.startTime) / 1000;
+                const minutes = Math.floor(elapsed / 60);
+                const seconds = Math.floor(elapsed % 60);
+                
+                document.getElementById('round-counter').textContent = this.round;
+                document.getElementById('time-display').textContent = 
+                    `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                
+                const timeSinceLastBlock = Date.now() - this.lastBlockTime;
+                const blockProgress = Math.min(timeSinceLastBlock / 1000,  this.blockTime / 1000);
+                document.getElementById('countdown').textContent = 
+                    blockProgress.toFixed(1);
+                
+                // Calculate actual TPS from recent spawns
+                const now = Date.now();
+                const recentSpawns = this.txSpawnTimes.filter(time => time > now - 1000); // Last 1 second
+                this.currentTPS = recentSpawns.length;
+                
+                const funnelTxs = this.funnel.transactions.length;
+                
+                document.getElementById('falling-count').textContent = this.currentTPS;
+                document.getElementById('funnel-count').textContent = funnelTxs;
+                document.getElementById('blocks-count').textContent = this.blocksCreated;
+            }
+            
+            animate() {
+                this.update();
+                this.draw();
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+        
+        // Initialize when DOM is loaded
+        window.addEventListener('DOMContentLoaded', () => {
+            new AlgorandFallingTxs();
+        });
+    </script>
+</body>
+</html>

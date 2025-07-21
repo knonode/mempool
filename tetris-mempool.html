@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Algorand Mempool - Blockrain Edition</title>
+    <link rel="stylesheet" href="blockrain/blockrain.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            height: 100vh;
+        }
+        
+        .container {
+            position: relative;
+            width: 100vw;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding-top: 20px;
+        }
+        
+        .game-container {
+            position: relative;
+            width: 300px;
+            height: 600px;
+            overflow: hidden;
+        }
+        
+        .game-container .blockrain-game-holder {
+            width: 300px !important;
+            height: 600px !important;
+        }
+        
+        .game-container canvas {
+            width: 300px !important;
+            height: 600px !important;
+        }
+        
+        /* Algorand Info Cards */
+        .algorand-info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 5px;
+            min-width: 200px;
+        }
+        
+        .algorand-info h2 {
+            color: #0f0;
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            text-align: center;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+            font-size: 12px;
+        }
+        
+        .info-label {
+            color: #ccc;
+        }
+        
+        .info-value {
+            color: #fff;
+            font-weight: bold;
+        }
+        
+        /* Transaction Type Legend */
+        .tx-legend {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 5px;
+            min-width: 180px;
+        }
+        
+        .tx-legend h3 {
+            color: #0f0;
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        .tx-item {
+            display: flex;
+            align-items: center;
+            margin: 3px 0;
+            font-size: 11px;
+        }
+        
+        .tx-color {
+            width: 12px;
+            height: 12px;
+            margin-right: 8px;
+            border: 1px solid #333;
+        }
+        
+        .tx-name {
+            color: #fff;
+        }
+        
+        /* Custom theme for Algorand colors */
+        .algorand-theme {
+            --payment-color: #3b82f6;
+            --asset-transfer-color: #ef4444;
+            --asset-config-color: #22c55e;
+            --asset-freeze-color: #f97316;
+            --app-call-color: #a855f7;
+            --key-registration-color: #06b6d4;
+            --state-proof-color: #ec4899;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="game-container">
+            <div class="game"></div>
+        </div>
+        
+        <!-- Algorand Info Panel -->
+        <div class="algorand-info">
+            <h2>ALGORAND MEMPOOL</h2>
+            <div class="info-row">
+                <span class="info-label">Blocks:</span>
+                <span class="info-value" id="blocks">1</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">TPS:</span>
+                <span class="info-value" id="tps">0</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Txs:</span>
+                <span class="info-value" id="txs">0</span>
+            </div>
+        </div>
+        
+        <!-- Transaction Type Legend -->
+        <div class="tx-legend">
+            <h3>Transaction Types</h3>
+            <div class="tx-item">
+                <div class="tx-color" style="background: #3b82f6;"></div>
+                <span class="tx-name">Payment (I)</span>
+            </div>
+            <div class="tx-item">
+                <div class="tx-color" style="background: #ef4444;"></div>
+                <span class="tx-name">Asset Transfer (O)</span>
+            </div>
+            <div class="tx-item">
+                <div class="tx-color" style="background: #22c55e;"></div>
+                <span class="tx-name">Asset Config (T)</span>
+            </div>
+            <div class="tx-item">
+                <div class="tx-color" style="background: #f97316;"></div>
+                <span class="tx-name">Asset Freeze (S)</span>
+            </div>
+            <div class="tx-item">
+                <div class="tx-color" style="background: #a855f7;"></div>
+                <span class="tx-name">App Call (Z)</span>
+            </div>
+            <div class="tx-item">
+                <div class="tx-color" style="background: #06b6d4;"></div>
+                <span class="tx-name">Key Registration (L)</span>
+            </div>
+            <div class="tx-item">
+                <div class="tx-color" style="background: #ec4899;"></div>
+                <span class="tx-name">State Proof (J)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- jQuery and Blockrain -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="blockrain/blockrain.jquery.js"></script>
+    
+    <script>
+        // Custom Algorand theme
+        const algorandTheme = {
+            background: '#000000',
+            backgroundGrid: '#101010',
+            primary: null,
+            secondary: null,
+            stroke: '#333333',
+            innerStroke: null,
+            
+            // Algorand transaction type colors
+            blocks: {
+                line: '#3b82f6',      // Payment (I piece) - Blue
+                square: '#ef4444',    // Asset Transfer (O piece) - Red
+                arrow: '#22c55e',     // Asset Config (T piece) - Green
+                rightHook: '#f97316', // Asset Freeze (S piece) - Orange
+                leftHook: '#a855f7',  // App Call (Z piece) - Purple
+                rightZag: '#06b6d4',  // Key Registration (L piece) - Cyan
+                leftZag: '#ec4899'    // State Proof (J piece) - Pink
+            }
+        };
+
+        // Game state tracking
+        let gameStats = {
+            startTime: Date.now(),
+            round: 1,
+            blocks: 0,
+            level: 1,
+            tps: 0,
+            lastTxTime: Date.now(),
+            txCount: 0,
+            recentTxs: [], // Array to track recent transactions for rolling TPS
+            tpsWindow: 1500 // 1.5 second window for TPS calculation
+        };
+
+        // Initialize the game
+        $(document).ready(function() {
+            $('.game').blockrain({
+                autoplay: true,
+                autoplayRestart: true,
+                theme: algorandTheme,
+                blockWidth: 20,
+                speed: 100, // Start with very fast speed
+                difficulty: 'normal',
+                onStart: function() {
+                    // Store the game instance globally
+                    window.gameInstance = this;
+                    
+                    // Force canvas size after initialization
+                    var canvas = this.element.find('canvas');
+                    canvas.attr('width', 300);
+                    canvas.attr('height', 600);
+                    canvas.css('width', '300px');
+                    canvas.css('height', '600px');
+                    
+                    // Force the game holder dimensions
+                    this.element.find('.blockrain-game-holder').css({
+                        'width': '300px',
+                        'height': '600px'
+                    });
+                    
+                    // Hide the score display
+                    this.element.find('.blockrain-score-holder').hide();
+                    
+                    // Initialize game stats
+                    gameStats.startTime = Date.now();
+                    updateStats();
+                },
+                
+                onPlaced: function() {
+                    console.log('Piece placed!');
+                    const now = Date.now();
+                    gameStats.txCount += 12; // Each piece has 4 squares × 3 tx types (payment, transfer, app call) = 12 transactions
+                    gameStats.lastTxTime = now;
+                    
+                    // Add transaction to recent history
+                    gameStats.recentTxs.push({
+                        count: 12,
+                        time: now
+                    });
+                    
+                    // Remove old transactions outside the window
+                    const cutoffTime = now - gameStats.tpsWindow;
+                    gameStats.recentTxs = gameStats.recentTxs.filter(tx => tx.time > cutoffTime);
+                    
+                    // Calculate TPS based on recent transactions only
+                    const recentTxCount = gameStats.recentTxs.reduce((sum, tx) => sum + tx.count, 0);
+                    const timeWindow = Math.min(gameStats.tpsWindow, now - gameStats.recentTxs[0]?.time || 0) / 1000;
+                    gameStats.tps = timeWindow > 0 ? Math.floor(recentTxCount / timeWindow) : 0;
+                    
+                    console.log('TxCount:', gameStats.txCount, 'Recent TPS:', gameStats.tps, 'Window:', timeWindow.toFixed(1) + 's');
+                    updateStats();
+                },
+                
+                onLine: function(lines, scoreIncrement, score) {
+                    console.log('Line cleared! Lines:', lines, 'ScoreIncrement:', scoreIncrement, 'Score:', score);
+                    gameStats.round += lines; // This counts blocks certified on chain
+                    console.log('Blocks (rounds):', gameStats.round);
+                    updateStats();
+                },
+                
+                onGameOver: function(score) {
+                    console.log('Game Over! Final stats - Round:', gameStats.round, 'TxCount:', gameStats.txCount);
+                }
+            });
+        });
+
+        // Update statistics display
+        function updateStats() {
+            console.log('updateStats called - Round:', gameStats.round, 'TxCount:', gameStats.txCount, 'TPS:', gameStats.tps);
+            const elapsed = (Date.now() - gameStats.startTime) / 1000;
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = Math.floor(elapsed % 60);
+            
+            $('#blocks').text(gameStats.round); // Lines cleared = blocks certified
+            $('#time').text(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+            $('#tps').text(gameStats.tps);
+            $('#txs').text(gameStats.txCount); // Individual transactions placed
+            $('#level').text(gameStats.level);
+        }
+
+        // Update stats every second
+        setInterval(updateStats, 1000);
+        
+        // Update speed randomly every 2 seconds
+        setInterval(function() {
+            if (window.gameInstance) {
+                const newSpeed = Math.floor(5 + Math.random() * 245); // 5-250 range for extreme changes
+                window.gameInstance.option('speed', newSpeed);
+                
+                // Clear recent transaction history to make TPS more responsive to speed changes
+                gameStats.recentTxs = [];
+                
+                console.log('Speed changed to:', newSpeed);
+            }
+        }, 2000); // Change every 2 seconds instead of 3
+    </script>
+</body>
+</html> 

@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Algorand Mempool - Xenakis Style</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            color: white;
+            font-family: monospace;
+            overflow: hidden;
+        }
+        
+        #canvas {
+            display: block;
+            background: linear-gradient(to bottom, #f8f8f8 0%, #e8e8e8 100%);
+            cursor: crosshair;
+        }
+        
+        .tx-legend {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 200px;
+            left: 10px;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        
+        #timeline {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 3px;
+        }
+        
+        .legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .play-btn {
+            background: #ff4444;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .round-indicator {
+            animation: pulse 0.3s ease-in-out;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+        
+        @keyframes blockFlash {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; background-color: rgba(255, 255, 255, 0.3); }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <div id="controls">
+        <div>Round: <span id="round-counter">1</span></div>
+        <div>Time: <span id="time-display">0:00</span></div>
+        <div>TPS: <span id="tps-display">0</span></div>
+        <button class="play-btn" id="play-pause">⏸️ Pause</button>
+    </div>
+    
+    <div class="tx-legend">
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #2563eb;"></div>
+            <span>Payment</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #dc2626;"></div>
+            <span>Asset Transfer</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #16a34a;"></div>
+            <span>Asset Config</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #ea580c;"></div>
+            <span>Asset Freeze</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #9333ea;"></div>
+            <span>App Call</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #0891b2;"></div>
+            <span>Key Registration</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #be185d;"></div>
+            <span>State Proof</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: #65a30d;"></div>
+            <span>Heartbeat</span>
+        </div>
+    </div>
+    
+    <div id="timeline">
+        <span>Block Time: 2.8s</span>
+        <span id="next-block">Next: <span id="countdown">2.8</span>s</span>
+    </div>
+
+    <script>
+        class AlgorandMempoolViz {
+            constructor() {
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                
+                // Algorand transaction types with colors
+                this.txTypes = [
+                    { name: 'Payment', color: '#2563eb', weight: 0.4 },
+                    { name: 'Asset Transfer', color: '#dc2626', weight: 0.25 },
+                    { name: 'Asset Config', color: '#16a34a', weight: 0.1 },
+                    { name: 'Asset Freeze', color: '#ea580c', weight: 0.05 },
+                    { name: 'App Call', color: '#9333ea', weight: 0.15 },
+                    { name: 'Key Registration', color: '#0891b2', weight: 0.02 },
+                    { name: 'State Proof', color: '#be185d', weight: 0.02 },
+                    { name: 'Heartbeat', color: '#65a30d', weight: 0.01 }
+                ];
+                
+                this.setupCanvas();
+                
+                // Visualization parameters
+                this.blockTime = 2800; // 2.8 seconds in ms
+                this.canvasTime = 3000; // 3 seconds of canvas time to the left of red line
+                this.pixelsPerSecond = 50; // Speed of canvas movement
+                
+                this.transactions = [];
+                this.round = 1;
+                this.startTime = Date.now();
+                this.isPlaying = true;
+                this.lastBlockTime = Date.now();
+                this.totalTxs = 0;
+                
+                // Red line position (present moment) - positioned so we can see txs accumulate before confirmation
+                this.redLineX = this.canvas.width * 0.75; // 75% from left, so 25% from right
+                
+                this.setupEventListeners();
+                this.animate();
+                this.generateTransactions();
+            }
+            
+            blendColors(color1, color2, ratio) {
+                // Simple color blending utility
+                const hex1 = color1.replace('#', '');
+                const hex2 = color2.replace('#', '');
+                
+                const r1 = parseInt(hex1.substr(0, 2), 16);
+                const g1 = parseInt(hex1.substr(2, 2), 16);
+                const b1 = parseInt(hex1.substr(4, 2), 16);
+                
+                const r2 = parseInt(hex2.substr(0, 2), 16);
+                const g2 = parseInt(hex2.substr(2, 2), 16);
+                const b2 = parseInt(hex2.substr(4, 2), 16);
+                
+                const r = Math.round(r1 * (1 - ratio) + r2 * ratio);
+                const g = Math.round(g1 * (1 - ratio) + g2 * ratio);
+                const b = Math.round(b1 * (1 - ratio) + b2 * ratio);
+                
+                return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+            }
+            
+            setupCanvas() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                
+                // Grid setup - ensure txTypes is defined
+                this.rowHeight = this.canvas.height / (this.txTypes?.length || 8);
+            }
+            
+            setupEventListeners() {
+                window.addEventListener('resize', () => {
+                    this.setupCanvas();
+                    // Recalculate red line position on resize
+                    this.redLineX = this.canvas.width * 0.75;
+                });
+                
+                document.getElementById('play-pause').addEventListener('click', () => {
+                    this.isPlaying = !this.isPlaying;
+                    document.getElementById('play-pause').textContent = 
+                        this.isPlaying ? '⏸️ Pause' : '▶️ Play';
+                });
+            }
+            
+            generateTransactions() {
+                if (!this.isPlaying) return;
+                
+                // Generate random transactions based on Algorand patterns
+                const numTx = Math.random() * 20 + 5; // 5-25 transactions per generation
+                
+                for (let i = 0; i < numTx; i++) {
+                    const typeIndex = this.weightedRandom();
+                    const tx = {
+                        type: typeIndex,
+                        x: this.canvas.width + Math.random() * 200, // Spawn off-screen right
+                        y: typeIndex * this.rowHeight + Math.random() * this.rowHeight * 0.8 + this.rowHeight * 0.1,
+                        size: Math.random() * 3 + 2,
+                        opacity: Math.random() * 0.4 + 0.6,
+                        age: 0,
+                        id: Math.random()
+                    };
+                    this.transactions.push(tx);
+                }
+                
+                // Schedule next generation
+                setTimeout(() => this.generateTransactions(), Math.random() * 300 + 100);
+            }
+            
+            weightedRandom() {
+                let random = Math.random();
+                for (let i = 0; i < this.txTypes.length; i++) {
+                    random -= this.txTypes[i].weight;
+                    if (random <= 0) return i;
+                }
+                return 0;
+            }
+            
+            update() {
+                if (!this.isPlaying) return;
+                
+                const now = Date.now();
+                const deltaTime = 16; // Assume 60fps
+                
+                // Move transactions left
+                this.transactions.forEach(tx => {
+                    tx.x -= this.pixelsPerSecond * (deltaTime / 1000);
+                    tx.age += deltaTime;
+                });
+                
+                // Remove transactions that are too far left
+                this.transactions = this.transactions.filter(tx => tx.x > -50);
+                
+                // Check for block completion
+                if (now - this.lastBlockTime >= this.blockTime) {
+                    this.certifyBlock();
+                    this.lastBlockTime = now;
+                }
+                
+                this.updateUI();
+            }
+            
+            certifyBlock() {
+                this.round++;
+                
+                // Count and remove transactions in the confirmed area (left of red line)
+                const txsInBlock = this.transactions.filter(tx => tx.x <= this.redLineX);
+                this.totalTxs += txsInBlock.length;
+                
+                // Flash effect for the confirmed area (left of red line)
+                this.flashConfirmedArea();
+                
+                // Remove confirmed transactions
+                this.transactions = this.transactions.filter(tx => tx.x > this.redLineX);
+                
+                // Add round indicator animation
+                document.getElementById('round-counter').classList.add('round-indicator');
+                setTimeout(() => {
+                    document.getElementById('round-counter').classList.remove('round-indicator');
+                }, 300);
+            }
+            
+            flashConfirmedArea() {
+                // Create a temporary flash overlay for the confirmed area (left of red line)
+                const flashDiv = document.createElement('div');
+                flashDiv.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: ${this.redLineX}px;
+                    height: 100vh;
+                    background: rgba(255, 255, 255, 0.4);
+                    pointer-events: none;
+                    z-index: 50;
+                    animation: blockFlash 0.6s ease-out;
+                `;
+                
+                document.body.appendChild(flashDiv);
+                setTimeout(() => flashDiv.remove(), 600);
+            }
+            
+            draw() {
+                // Clear canvas with gradient background
+                const gradient = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
+                gradient.addColorStop(0, '#f8f8f8');
+                gradient.addColorStop(1, '#e8e8e8');
+                this.ctx.fillStyle = gradient;
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw horizontal grid lines
+                this.ctx.strokeStyle = '#d0d0d0';
+                this.ctx.lineWidth = 1;
+                const numRows = this.txTypes?.length || 8;
+                for (let i = 0; i <= numRows; i++) {
+                    const y = i * this.rowHeight;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(0, y);
+                    this.ctx.lineTo(this.canvas.width, y);
+                    this.ctx.stroke();
+                }
+                
+                // Draw transactions
+                this.transactions.forEach(tx => {
+                    const type = this.txTypes?.[tx.type];
+                    if (!type) return; // Skip if type is undefined
+                    
+                    // Determine opacity and color based on position relative to red line
+                    let opacity = tx.opacity;
+                    let color = type.color;
+                    
+                    if (tx.x < this.redLineX) {
+                        // Transactions waiting to be confirmed (left of red line)
+                        opacity *= 0.8;
+                        // Slight orange tint for pending confirmation
+                        color = this.blendColors(color, '#ff6b35', 0.2);
+                    } else {
+                        // Transactions in mempool (right of red line)
+                        opacity *= 1.0;
+                    }
+                    
+                    this.ctx.fillStyle = color + Math.floor(opacity * 255).toString(16).padStart(2, '0');
+                    this.ctx.beginPath();
+                    this.ctx.arc(tx.x, tx.y, tx.size, 0, Math.PI * 2);
+                    this.ctx.fill();
+                });
+                
+                // Draw the red vertical line (present moment)
+                this.ctx.strokeStyle = '#dc2626';
+                this.ctx.lineWidth = 3;
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.redLineX, 0);
+                this.ctx.lineTo(this.redLineX, this.canvas.height);
+                this.ctx.stroke();
+            }
+            
+            updateUI() {
+                const elapsed = (Date.now() - this.startTime) / 1000;
+                const minutes = Math.floor(elapsed / 60);
+                const seconds = Math.floor(elapsed % 60);
+                
+                document.getElementById('round-counter').textContent = this.round;
+                document.getElementById('time-display').textContent = 
+                    `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                
+                const tps = elapsed > 0 ? (this.totalTxs / elapsed).toFixed(1) : '0';
+                document.getElementById('tps-display').textContent = tps;
+                
+                // Countdown to next block
+                const timeSinceLastBlock = Date.now() - this.lastBlockTime;
+                const timeToNextBlock = (this.blockTime - timeSinceLastBlock) / 1000;
+                document.getElementById('countdown').textContent = 
+                    Math.max(0, timeToNextBlock).toFixed(1);
+            }
+            
+            animate() {
+                this.update();
+                this.draw();
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+        
+        // Initialize the visualization
+        window.addEventListener('DOMContentLoaded', () => {
+            new AlgorandMempoolViz();
+        });
+    </script>
+</body>
+</html>

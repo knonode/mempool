@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Algorand Mempool - Unknown Pleasures</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            height: 100vh;
+        }
+        
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .visualization {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #canvas-container {
+            position: relative;
+            width: 500px;
+            height: 700px;
+        }
+        
+        .labels-container {
+            position: absolute;
+            width: 180px;
+            height: auto;
+        }
+        
+        .line-label {
+            font-size: 12px;
+            color: #fff;
+            opacity: 0.8;
+            white-space: nowrap;
+            text-align: left;
+            padding: 2px 0;
+        }
+        
+        /* Info Cards */
+        .info-card {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            min-width: 200px;
+        }
+        
+        .info-card h2 {
+            color: #0f0;
+            margin: 0 0 15px 0;
+            font-size: 18px;
+            text-align: center;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        
+        .info-label {
+            color: #ccc;
+        }
+        
+        .info-value {
+            color: #fff;
+            font-weight: bold;
+        }
+        
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+        }
+        
+        .control-btn {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid #333;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            transition: all 0.3s ease;
+        }
+        
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .control-btn.active {
+            background: #0f0;
+            color: #000;
+        }
+
+        .values-container {
+            position: absolute;
+            width: 120px;
+            height: auto;
+            z-index: 10; /* Ensure it's always on top */
+        }
+
+        .value-label {
+            font-size: 12px;
+            color: #fff;
+            opacity: 0.8;
+            white-space: nowrap;
+            text-align: right;
+            padding: 2px 0;
+        }
+
+        /* Reset and simplify */
+        #status-container {
+            position: absolute;
+            bottom: 80px;
+            left: -5px;
+            width: 100%;
+            text-align: center;
+            font-size: 12px;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+        }
+
+        .spacer {
+            display: inline-block;
+            width: 40px;
+        }
+
+        #round-text, #tps-text, #pending-text {
+            display: inline-block;
+        }
+
+        #round-value, #tps-value, #pending-value {
+            display: inline-block;
+            text-align: right;
+            min-width: 70px; /* Fixed width for round value */
+        }
+        
+        #tps-value, #pending-value {
+            min-width: 40px; /* Smaller fixed width for tps and pending */
+        }
+
+        .title {
+            position: absolute;
+            top: 210px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 32px;
+            font-family: Helvetica, Arial, sans-serif;
+            font-weight: 50;
+            color: white;
+            letter-spacing: 2px;
+            text-align: center;
+            z-index: 10;
+            filter: blur(0.5px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="title">ALGORAND MEMPOOL</div>
+        <div class="visualization">
+            <div id="values-container" class="values-container">
+                <!-- Values will be generated dynamically -->
+            </div>
+            <div id="canvas-container">
+                <!-- p5.js canvas will be inserted here -->
+            </div>
+            <div class="labels-container" id="labelsContainer">
+                <!-- Labels will be generated dynamically -->
+            </div>
+            <!-- Simple status text under waves -->
+            <div id="status-container" class="status-container">
+                <span id="round-text">round: </span><span id="round-value">52019000</span>
+                <span class="spacer"></span>
+                <span id="tps-text">tps: </span><span id="tps-value">264</span>
+                <span class="spacer"></span>
+                <span id="pending-text">pending: </span><span id="pending-value">197</span>
+            </div>
+        </div>
+        
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <script>
+        // Constants adapted from the original Unknown Pleasures
+        const CANVAS_WIDTH = 500;
+        const CANVAS_HEIGHT = 700;
+        const WIDTH_FRACTION = 0.80; // Increased from 0.40 to make it wider
+        const START_Y = 80; // Moved up from 110 to center better
+        const WAVE_WIDTH = WIDTH_FRACTION * CANVAS_WIDTH;
+        const START_X = (CANVAS_WIDTH / 2) - (WAVE_WIDTH / 2);
+        const END_X = START_X + WAVE_WIDTH;
+        const SLICE_SIZE = 65;
+        const WAVE_COUNT = 33; // Increased from 14 to create more dramatic mountain
+        const MAX_WAVE_HEIGHT = 80; // Double the current height
+        const SEPARATION = 12; // Increased from 4 for better spacing between waves
+        const GAUSSIAN_SLICE_LENGTH = 22;
+        const GAUSSIAN_STD_DEVIATION = 3;
+        const GAUSSIAN_CUTOFF_BASE = 0.01; // Doubled from 0.01
+        const GAUSSIAN_CUTOFF_RANDOM_STRENGTH = 0.7;
+
+        // Transaction types - each will be a line in the mountain
+        const TX_TYPES = [
+            { id: 'acfg', label: 'acfg', baseActivity: 0.04, currentValue: 0, minValue: 1, maxValue: 6 },
+            { id: 'afrz', label: 'afrz', baseActivity: 0.01, currentValue: 0, minValue: 0, maxValue: 1 },
+            { id: 'keyreg', label: 'keyreg', baseActivity: 0.05, currentValue: 0, minValue: 0, maxValue: 5 },
+            { id: 'stpf', label: 'stpf', baseActivity: 0.01, currentValue: 0, minValue: 0.0, maxValue: 0.02 },
+            { id: 'pay', label: 'pay', baseActivity: 0.6, currentValue: 0, minValue: 0.1, maxValue: 100000 },
+            { id: 'app-1', label: '2164567315', baseActivity: 0.25, currentValue: 0, minValue: 0.2, maxValue: 84710 },
+            { id: 'app-2', label: '1111990830', baseActivity: 0.35, currentValue: 0, minValue: 0.1, maxValue: 30773 },
+            { id: 'app-3', label: '1100387397', baseActivity: 0.55, currentValue: 0, minValue: 0.3, maxValue: 292929},
+            { id: 'app-4', label: '2614712672', baseActivity: 0.25, currentValue: 0, minValue: 0.1, maxValue: 298629 },
+            { id: 'app-5', label: 'hampelman.algo', baseActivity: 0.15, currentValue: 0, minValue: 0.05, maxValue: 497 },
+            { id: 'app-6', label: '1002541853', baseActivity: 0.2, currentValue: 0, minValue: 0.1, maxValue: 93 },
+            { id: 'app-7', label: '1002541853', baseActivity: 0.18, currentValue: 0, minValue: 0.05, maxValue: 209238 },
+            { id: 'app-8', label: '1284326447', baseActivity: 0.52, currentValue: 0, minValue: 0.1, maxValue: 97272 },
+            { id: 'app-9', label: '1742042269', baseActivity: 0.16, currentValue: 0, minValue: 0.05, maxValue: 63620 },
+            { id: 'app-10', label: '3033696872', baseActivity: 0.14, currentValue: 0, minValue: 0.05, maxValue: 543 },
+            { id: 'app-11', label: '1171237425', baseActivity: 0.12, currentValue: 0, minValue: 0.05, maxValue: 44772 },
+            { id: 'app-12', label: '360019122', baseActivity: 0.2, currentValue: 0, minValue: 0.05, maxValue: 13 },
+            { id: 'app-13', label: '1018187012', baseActivity: 0.08, currentValue: 0, minValue: 0.05, maxValue: 57322 },
+            { id: 'app-14', label: '2623933136', baseActivity: 0.06, currentValue: 0, minValue: 0.05, maxValue: 254677 },
+            { id: 'app-15', label: '1615566206', baseActivity: 0.04, currentValue: 0, minValue: 0.05, maxValue: 252 },
+            { id: 'usdc', label: 'USDC', baseActivity: 0.7, currentValue: 0, minValue: 3, maxValue: 50000 },
+            { id: 'wbtc', label: 'wBTC', baseActivity: 0.6, currentValue: 0, minValue: 0.3, maxValue: 72387 },
+            { id: 'algo', label: 'Atard', baseActivity: 0.77, currentValue: 0, minValue: 0.3, maxValue: 23426 },
+            { id: 'akta', label: 'AKTA', baseActivity: 0.5, currentValue: 0, minValue: 0.3, maxValue: 325773 },
+            { id: 'token1', label: 'MOOJ', baseActivity: 0.36, currentValue: 0, minValue: 0.05, maxValue: 444323 },
+            { id: 'token2', label: 'BASED', baseActivity: 0.03, currentValue: 0, minValue: 0.05, maxValue: 468898 },
+            { id: 'token3', label: 'ALPHA', baseActivity: 0.02, currentValue: 0, minValue: 0.05, maxValue: 9532975 },
+            { id: 'token4', label: 'TINY', baseActivity: 0.087, currentValue: 0, minValue: 0.05, maxValue: 219985 },
+            { id: 'token5', label: 'COMPX', baseActivity: 0.06, currentValue: 0, minValue: 0.05, maxValue: 2907073 },
+            { id: 'token6', label: 'xUSD', baseActivity: 0.039, currentValue: 0, minValue: 0.05, maxValue: 21579839 },
+            { id: 'token7', label: 'PEPE', baseActivity: 0.4, currentValue: 0, minValue: 0.05, maxValue: 87547490 },
+            { id: 'token8', label: 'ORA', baseActivity: 0.3, currentValue: 0, minValue: 0.05, maxValue: 48393434 },
+            { id: 'token9', label: 'Finite', baseActivity: 0.15, currentValue: 0, minValue: 0.05, maxValue: 473272 },
+        ];
+
+        // Global variables
+        let tick = 0;
+        let cutoffs = [];
+        let points = [];
+        let isPlaying = true;
+        let startTime = Date.now();
+        let round = 1;
+        let block = 1;
+        let totalTxs = 0;
+        let tps = 0;
+        let recentTxs = [];
+        let tpsWindow = 2000;
+        let horizontalUpdateCounter = 0;
+        const HORIZONTAL_UPDATE_RATE = 7; // Only update horizontal position every 7 frames
+
+        // Global variables for status text
+        let roundNumber = 52019000;
+        let currentTps = 150;
+        let pendingTxs = 100;
+        let roundTimer;
+        let statsTimer;
+
+        // Initialize data array
+        for (let i = 0; i < SLICE_SIZE; ++i) {
+            points.push(new Array(WAVE_COUNT).fill(0));
+        }
+
+        // Gaussian function from original
+        function gaussian(x, mu, sigma) {
+            let a = 1 / (sigma * Math.sqrt(2 * PI));
+            let power_term = -0.5 * Math.pow(((x - mu) / sigma), 2);
+            let y = a * Math.exp(power_term);
+            return y;
+        }
+
+        // Transform function from original, adapted for transaction data
+        function transformWithWeights(amps, cutoff) {
+            for (let i = 0; i < amps.length; ++i) {
+                let x = map(i, 0, amps.length, -GAUSSIAN_SLICE_LENGTH, GAUSSIAN_SLICE_LENGTH);
+                let gaussian_adjustment = gaussian(x, 0, GAUSSIAN_STD_DEVIATION);
+                
+                if (gaussian_adjustment > cutoff) {
+                    gaussian_adjustment = cutoff;
+                }
+
+                let val = amps[i];
+                val *= map(gaussian_adjustment, 0, cutoff, 0.05, 0.5);
+                amps[i] = val;
+            }
+            return amps;
+        }
+
+        // Generate transaction activity data
+        function generateTransactionData() {
+            let newData = [];
+            for (let i = 0; i < WAVE_COUNT; ++i) {
+                let baseActivity;
+                
+                // Use transaction type activity if available, otherwise use a default pattern
+                // Use baseActivity for the waves, not currentValue
+                if (i < TX_TYPES.length) {
+                    baseActivity = TX_TYPES[i].baseActivity;
+                } else {
+                    // Create a pattern for additional waves
+                    baseActivity = 0.1 + (i - TX_TYPES.length) * 0.02;
+                    baseActivity = Math.min(0.5, baseActivity); // Cap at 0.5
+                }
+                
+                let activity = baseActivity * (0.5 + Math.random() * 1.0);
+                
+                // Add some time-based variation
+                activity += Math.sin(tick * 0.01 + i * 0.5) * 0.1;
+                activity += Math.sin(tick * 0.02 + i * 0.3) * 0.05;
+                
+                // Add some randomness
+                activity += (Math.random() - 0.5) * 0.2;
+                
+                // Ensure activity stays within bounds
+                activity = Math.max(0, Math.min(1, activity));
+                
+                newData.push(activity * 255); // Scale to 0-255 range
+            }
+            return newData;
+        }
+
+        function initStatusText() {
+            // Set up timers
+            roundTimer = setInterval(() => {
+                roundNumber++;
+                // Random TPS between 12 and 300
+                currentTps = Math.floor(Math.random() * (300 - 12 + 1)) + 12;
+                updateStatusText();
+            }, 1000); // Update round and TPS every 2.8 seconds
+            
+            statsTimer = setInterval(() => {
+                // Random pending txs between 10 and 400
+                pendingTxs = Math.floor(Math.random() * (400 - 10 + 1)) + 10;
+                updateStatusText();
+            }, 500); // Update pending txs every half second
+            
+            // Initial update
+            updateStatusText();
+        }
+
+        function updateStatusText() {
+            document.getElementById('round-value').textContent = roundNumber;
+            document.getElementById('tps-value').textContent = currentTps;
+            document.getElementById('pending-value').textContent = pendingTxs;
+        }
+
+        // New function to shuffle and reposition labels
+        function shuffleLabels() {
+            // Only shuffle labels from position 5 onwards
+            const fixedLabelCount = 5; // Keep first 5 labels fixed
+            
+            // Get available labels to shuffle (from position 5 onwards)
+            const availableLabels = TX_TYPES.slice(fixedLabelCount).map(type => type.label);
+            
+            // Shuffle the array
+            for (let i = availableLabels.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [availableLabels[i], availableLabels[j]] = [availableLabels[j], availableLabels[i]];
+            }
+            
+            // Update only the non-fixed labels with shuffled text
+            for (let i = 0; i < availableLabels.length; i++) {
+                const labelIndex = i + fixedLabelCount; // Start at position 5
+                const label = document.getElementById(`label-${labelIndex}`);
+                if (label) {
+                    label.textContent = availableLabels[i];
+                }
+            }
+        }
+
+        function setup() {
+            let cnv = createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+            cnv.parent("canvas-container");
+            
+            // Create labels and value displays
+            createLabels();
+            createValueLabels();
+            initStatusText();
+            
+            // Set interval to update values periodically
+            setInterval(updateTxValues, 1000); // Update values every second
+            
+            // Set interval to shuffle labels every second
+            setInterval(shuffleLabels, 1000);
+        }
+
+        function createLabels() {
+            const labelsContainer = document.getElementById('labelsContainer');
+            
+            // Clear existing labels
+            labelsContainer.innerHTML = '';
+            
+            // Position container to the right of the waves with a gap
+            labelsContainer.style.height = (WAVE_COUNT * SEPARATION + MAX_WAVE_HEIGHT) + 'px';
+            labelsContainer.style.top = (START_Y + 20) + 'px';
+            labelsContainer.style.left = (END_X + 145) + 'px';
+            labelsContainer.style.right = 'auto';
+            
+            // Create labels for each wave (transaction type)
+            for (let i = 0; i < WAVE_COUNT; ++i) {
+                const label = document.createElement('div');
+                label.className = 'line-label';
+                label.id = `label-${i}`; // Assign a unique ID
+                
+                // Use transaction type label if available, otherwise use generic label
+                if (i < TX_TYPES.length) {
+                    label.textContent = TX_TYPES[i].label;
+                } else {
+                    label.textContent = `Wave ${i + 1}`;
+                }
+                
+                // Position each label to align with its wave
+                label.style.position = 'absolute';
+                label.style.top = (i * SEPARATION) + 'px';
+                label.style.width = '100%';
+                label.style.textAlign = 'left';
+                
+                labelsContainer.appendChild(label);
+            }
+        }
+
+        function createValueLabels() {
+            const valuesContainer = document.getElementById('values-container');
+            
+            // Clear existing values
+            valuesContainer.innerHTML = '';
+            
+            // Position container absolutely with fixed values
+            valuesContainer.style.position = 'absolute';
+            valuesContainer.style.height = (WAVE_COUNT * SEPARATION + MAX_WAVE_HEIGHT) + 'px';
+            valuesContainer.style.top = (START_Y + 20) + 'px'; 
+            valuesContainer.style.width = '60px';
+            valuesContainer.style.left = '130px'; // Move further right
+            
+            // Create value labels for each wave (transaction type)
+            for (let i = 0; i < WAVE_COUNT; ++i) {
+                const valueLabel = document.createElement('div');
+                valueLabel.className = 'value-label';
+                valueLabel.id = `value-${i}`;
+                
+                // Initialize with integer values
+                if (i < TX_TYPES.length) {
+                    valueLabel.textContent = Math.round(TX_TYPES[i].currentValue);
+                } else {
+                    valueLabel.textContent = "0";
+                }
+                
+                // Position each label to align with its wave
+                valueLabel.style.position = 'absolute';
+                valueLabel.style.top = (i * SEPARATION) + 'px';
+                valueLabel.style.width = '100%';
+                valueLabel.style.textAlign = 'right'; // Ensure right alignment
+                
+                valuesContainer.appendChild(valueLabel);
+            }
+            
+            // Run updateTxValues immediately to set initial values
+            updateTxValues();
+        }
+
+        function updateTxValues() {
+            // Update transaction values with custom ranges
+            for (let i = 0; i < TX_TYPES.length; ++i) {
+                const type = TX_TYPES[i];
+                
+                // Default range if not specified
+                const minVal = type.minValue !== undefined ? type.minValue : 0;
+                const maxVal = type.maxValue !== undefined ? type.maxValue : 1;
+                
+                // Generate random value within custom range
+                const range = maxVal - minVal;
+                const randomValue = minVal + (Math.random() * range);
+                
+                // Store as integer without decimal places
+                TX_TYPES[i].currentValue = Math.round(randomValue);
+                
+                // Update the displayed value
+                const valueLabel = document.getElementById(`value-${i}`);
+                if (valueLabel) {
+                    valueLabel.textContent = TX_TYPES[i].currentValue;
+                }
+            }
+        }
+
+        function draw() {
+            if (!isPlaying) return;
+            
+            tick++;
+            horizontalUpdateCounter++;
+
+            // Generate new transaction data (vertical movement)
+            let newData = generateTransactionData();
+            
+            // Slow down ONLY the horizontal scrolling by updating buffer less frequently
+            if (horizontalUpdateCounter >= HORIZONTAL_UPDATE_RATE) {
+                horizontalUpdateCounter = 0;
+                
+                // Add to points array (this controls horizontal scrolling)
+                points.push(newData);
+                if (points.length > SLICE_SIZE) {
+                    points.shift();
+                }
+            }
+
+            // Draw background
+            background(0);
+
+            // Draw the mountain silhouette
+            stroke(200, 200, 200);
+            fill(0, 0, 0);
+            
+            // Generate each wave (transaction type)
+            for (let j = 0; j < WAVE_COUNT; ++j) {
+                // Generate random peak cutoff for each wave
+                if (!cutoffs[j]) {
+                    let random_deviation = GAUSSIAN_CUTOFF_BASE * (Math.random() * 2 - 1) * GAUSSIAN_CUTOFF_RANDOM_STRENGTH;
+                    cutoffs[j] = GAUSSIAN_CUTOFF_BASE + random_deviation;
+                }
+
+                // Get time slices for current transaction type
+                let current_wave_amps = [];
+                for (let i = SLICE_SIZE - 1; i >= 0; --i) {
+                    let val = points[i][j];
+                    current_wave_amps.push(val);
+                }
+
+                // Transform into Unknown Pleasures shape
+                current_wave_amps = transformWithWeights(current_wave_amps, cutoffs[j]);
+
+                // Base Y value for current wave
+                const sep = SEPARATION * j;
+
+                // Draw the curve
+                beginShape();
+                for (let i = 0; i < SLICE_SIZE; ++i) {
+                    let x = map(i, 0, SLICE_SIZE, START_X, END_X);
+                    let h = map(current_wave_amps[i], 0, 255, START_Y + MAX_WAVE_HEIGHT + sep, START_Y + sep);
+                    curveVertex(x, h);
+                }
+                endShape();
+            }
+        }
+    </script>
+</body>
+</html>
